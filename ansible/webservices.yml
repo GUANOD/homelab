@@ -112,11 +112,60 @@
      ########### CADDY
     - name: Install build dependencies
       apt:
-        name: [debian-keyring, debian-archive-keyring, apt-transport-https, golang]
+        name: [debian-keyring, debian-archive-keyring, apt-transport-https]
         state: present
         update_cache: yes
 
-    - name: Install xcaddy via Cloudsmith repo
+      ######### GOLANG Version 1.23
+    - name: Download and Install Go 1.23.0
+      shell: |
+        curl -L https://go.dev/dl/go1.23.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+      args:
+        creates: /usr/local/go/bin/go
+
+    - name: Link Go to /usr/bin for global access
+      file:
+        src: /usr/local/go/bin/go
+        dest: /usr/bin/go
+        state: link
+        force: yes
+
+    - name: Link Gofmt to /usr/bin
+      file:
+        src: /usr/local/go/bin/gofmt
+        dest: /usr/bin/gofmt
+        state: link
+        force: yes
+
+    - name: Verify Go version
+      command: go version
+      register: go_version_output
+
+    - name: Print Go version
+      debug:
+        msg: "Installed {{ go_version_output.stdout }}"
+
+      ######### caddy
+
+    - name: Add Caddy GPG key
+      shell: |
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+
+    - name: Add Caddy repository
+      copy:
+        dest: /etc/apt/sources.list.d/caddy-stable.list
+        content: |
+          deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+
+    - name: Install Caddy
+      apt:
+        name: caddy
+        state: present
+        update_cache: yes
+
+    - name: DL xcaddy
       shell: |
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-xcaddy.list
@@ -135,8 +184,6 @@
         dest: /usr/bin/caddy
         remote_src: yes
         mode: '0755'
-        owner: root
-        group: root
       notify: Restart Caddy
 
     - name: Configure Caddyfile for Cloudflare
