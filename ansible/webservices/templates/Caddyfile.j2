@@ -1,0 +1,41 @@
+{
+    email {{ caddy_email }}
+}
+
+(cloudflare_tls) {
+    tls {
+        dns cloudflare {{ cloudflare_api_token }}
+    }
+}
+
+agasetup.{{ domain }} {
+    import cloudflare_tls
+    reverse_proxy {{ webservices_address }}:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+}
+
+agadmin.{{ domain }} {
+    import cloudflare_tls
+    reverse_proxy {{ webservices_address }}:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+}
+
+portainer.{{ domain }} {
+    import cloudflare_tls
+    reverse_proxy https://{{ devdeb_address }}:9443 {
+        transport http {
+            tls
+            tls_insecure_skip_verify
+        }
+
+        header_up Host {upstream_hostport}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+}

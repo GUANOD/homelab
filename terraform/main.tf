@@ -29,8 +29,17 @@ resource "local_file" "ansible_inventory" {
   content = <<EOT
     [webservices]
     ${split("/", var.webservices_address )[0]} ansible_user=root ansible_ssh_private_key_file=${module.webservices.root_ws_private_key_path}
-    EOT
+  EOT
   filename = "${path.module}/../ansible/inventory.ini"
+}
+
+resource "local_file" "ansible_vars" {
+  content  = <<EOT
+    admin_user: "${var.webservices_admin_user}"
+    password: "${var.webservices_admin_password}"
+    admin_public_key: "${module.webservices.admin_ws_public_key}"
+    EOT
+  filename = "../ansible/webservices/vars/tf_gen.yml"
 }
 
 resource "null_resource" "ansible_provisioner" {
@@ -39,23 +48,10 @@ resource "null_resource" "ansible_provisioner" {
     instance_id = module.webservices.instance_id
   }
 
-  provisioner "local-exec" {
+    provisioner "local-exec" {
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
     }
-    
-    command = <<-EOT
-      trap 'rm -f temp_secrets.yml' EXIT
-      
-      cat << 'EOF' > temp_secrets.yml
-      admin_user: "${var.webservices_admin_user}"
-      password: "${var.webservices_admin_password}"
-      admin_public_key: "${module.webservices.admin_ws_public_key}"
-      EOF
-
-      ansible-playbook -i ${local_file.ansible_inventory.filename} \
-        -e "@temp_secrets.yml" \
-        ${path.module}/../ansible/webservices.yml
-    EOT
+    command = "ansible-playbook -i ${local_file.ansible_inventory.filename} -e '@${local_file.ansible_vars.filename}' ${path.module}/../ansible/webservices/webservices.yml"
   }
 }

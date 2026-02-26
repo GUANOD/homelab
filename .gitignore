@@ -7,6 +7,7 @@ terraform.tfvars
 # Ansible
 *.retry
 *.vault_pass
+AdGuardHome*
 
 # SSH Keys
 *.ssh/
@@ -15,3 +16,4 @@ proxmox_lxc_key
 #secrets
 secrets*
 **/secrets*
+tf_gen*
