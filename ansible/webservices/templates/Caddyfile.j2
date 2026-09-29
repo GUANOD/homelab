@@ -4,16 +4,7 @@
 
 (cloudflare_tls) {
     tls {
-        dns cloudflare {{ cloudflare_api_token }}
-    }
-}
-
-agasetup.{{ domain }} {
-    import cloudflare_tls
-    reverse_proxy {{ webservices_address }}:3000 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-Proto https
+        dns cloudflare {env.CF_API_TOKEN}
     }
 }
 
@@ -28,12 +19,28 @@ agadmin.{{ domain }} {
 
 portainer.{{ domain }} {
     import cloudflare_tls
-    reverse_proxy https://{{ devdeb_address }}:9443 {
+    reverse_proxy https://{{ docker_address }}:9443 {
         transport http {
             tls
             tls_insecure_skip_verify
         }
 
+        header_up Host {upstream_hostport}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+}
+
+home.{{ domain }} {
+    import cloudflare_tls
+    # Homepage checks the Host header against HOMEPAGE_ALLOWED_HOSTS, so keep the original host
+    reverse_proxy {{ docker_address }}:3000
+}
+
+hass.{{ domain }} {
+    import cloudflare_tls
+    # Home Assistant serves plain HTTP on 8123 (no upstream TLS)
+    reverse_proxy {{ hass_address }}:8123 {
         header_up Host {upstream_hostport}
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto https

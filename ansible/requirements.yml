@@ -1,0 +1,7 @@
+---
+# ansible-galaxy collection install -r ansible/requirements.yml
+collections:
+  - name: community.general
+    version: "11.2.1"
+  - name: community.docker
+    version: "4.7.0"

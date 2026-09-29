@@ -10,6 +10,7 @@ output "instance_id" {
 //root key
 output "root_ws_public_key" {
   value = tls_private_key.root_ws_private_key.public_key_openssh
+  sensitive = true
 }
 output "root_ws_private_key_path" {
   value = local_file.root_ws_private_key_file.filename
@@ -19,6 +20,7 @@ output "root_ws_private_key_path" {
 //admin key
 output "admin_ws_public_key" {
   value = tls_private_key.admin_ws_private_key.public_key_openssh
+  sensitive = true
 }
 output "admin_ws_private_key_path" {
   value = local_file.admin_ws_private_key_file.filename

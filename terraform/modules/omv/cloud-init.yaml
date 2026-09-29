@@ -1,0 +1,35 @@
+#cloud-config
+
+hostname: ${hostname}
+timezone: ${timezone}
+
+users:
+  - name: ${username}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users,sudo
+    shell: /bin/bash
+    passwd: ${password}
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${ssh_key}
+
+ssh_pwauth: true
+package_update: true
+package_upgrade: true
+
+packages:
+  - qemu-guest-agent
+  - net-tools
+  - curl
+  - sudo
+
+growpart:
+  mode: auto
+  devices: ["/"]
+
+runcmd:
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+  - wget -O - https://get.openmediavault.io | sh -
+  - echo "all-good" > /tmp/cloud-config.done
+  - reboot

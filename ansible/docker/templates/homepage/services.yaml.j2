@@ -1,0 +1,70 @@
+---
+# {{ ansible_managed }}
+# Stats widgets are rendered only when their credentials exist (see vars/secrets.yml.example).
+# Status dots (siteMonitor) are checked by the Homepage container directly, not through Caddy.
+
+- Infrastructure:
+    - Proxmox:
+        icon: proxmox.png
+        href: https://10.14.75.9:8006
+        description: pve1 hypervisor
+        siteMonitor: https://10.14.75.9:8006
+        widget:
+          type: proxmox
+          url: https://10.14.75.9:8006
+          username: {{ homepage_proxmox_token_id | to_json }}
+          password: {{ homepage_proxmox_token_secret | to_json }}
+          node: pve1
+
+    - OpenMediaVault:
+        icon: openmediavault.png
+        href: http://10.14.75.3
+        description: NAS
+        siteMonitor: http://10.14.75.3
+{% if homepage_omv_username is defined and homepage_omv_password is defined %}
+        widget:
+          type: openmediavault
+          url: http://10.14.75.3
+          username: {{ homepage_omv_username | to_json }}
+          password: {{ homepage_omv_password | to_json }}
+{% endif %}
+
+    - Portainer:
+        icon: portainer.png
+        href: https://portainer.{{ domain }}
+        description: Docker host
+        siteMonitor: https://10.14.75.4:9443
+{% if homepage_portainer_api_key is defined %}
+        widget:
+          type: portainer
+          url: https://10.14.75.4:9443
+          env: {{ homepage_portainer_env | default(3) }}
+          key: {{ homepage_portainer_api_key | to_json }}
+{% endif %}
+
+- Network:
+    - AdGuard Home:
+        icon: adguard-home.png
+        href: https://agadmin.{{ domain }}
+        description: DNS + ad blocking
+        siteMonitor: http://10.14.75.2:8080
+{% if homepage_adguard_username is defined and homepage_adguard_password is defined %}
+        widget:
+          type: adguard
+          url: http://10.14.75.2:8080
+          username: {{ homepage_adguard_username | to_json }}
+          password: {{ homepage_adguard_password | to_json }}
+{% endif %}
+
+- Home:
+    - Home Assistant:
+        icon: home-assistant.png
+        href: https://hass.{{ domain }}
+        description: Home automation
+        siteMonitor: http://10.14.75.11:8123
+{% if homepage_hass_token is defined %}
+        widget:
+          type: homeassistant
+          url: http://10.14.75.11:8123
+          key: {{ homepage_hass_token | to_json }}
+{% endif %}

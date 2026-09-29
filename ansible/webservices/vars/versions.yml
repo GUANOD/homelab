@@ -1,1 +1,5 @@
 go_version: "1.23.0"
+
+# AdGuard Home release + sha256 of AdGuardHome_linux_amd64.tar.gz (from the release's checksums.txt)
+adguard_version: "0.107.73"
+adguard_sha256: "bf61a592ce8edeb38b3aff19033a90e704f733cb08114fa52730584a52727ee4"

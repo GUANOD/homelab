@@ -1,0 +1,162 @@
+---
+- name: Docker host (Docker CE, Portainer, Homepage)
+  hosts: docker
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - vars/versions.yml
+    - vars/secrets.yml
+    - vars/tf_gen.yml
+    # domain + service hostnames shared with the webservices playbook
+    - ../webservices/vars/secrets.yml
+
+  vars:
+    homepage_uid: 1000
+    homepage_config_dir: /opt/homepage/config
+
+  tasks:
+    - name: Wait for SSH and cloud-init
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+
+    # rc 2 = done with recoverable errors; Proxmox's own user-data triggers a deprecation
+    # warning ("'user' of type string"), so only rc 1 (real errors) fails the play
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      register: cloud_init_status
+      changed_when: false
+      failed_when: cloud_init_status.rc not in [0, 2]
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    ########### Docker CE
+    - name: Install Docker prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, python3-docker, python3-requests]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create apt keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker apt key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker apt repository
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: https://download.docker.com/linux/debian
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: stable
+        architectures: amd64
+        signed_by: /etc/apt/keyrings/docker.asc
+
+    - name: Install Docker CE {{ docker_ce_version }}
+      ansible.builtin.apt:
+        name:
+          - "docker-ce={{ docker_ce_version }}"
+          - "docker-ce-cli={{ docker_ce_version }}"
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is enabled and started
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    ########### Portainer
+    - name: Create Portainer directory
+      ansible.builtin.file:
+        path: /opt/portainer
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    # Only read on first start: the admin exists from the beginning, no setup wizard
+    - name: Write Portainer initial admin password
+      ansible.builtin.copy:
+        content: "{{ portainer_admin_password }}"
+        dest: /opt/portainer/admin_password
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+
+    - name: Create Portainer data volume
+      community.docker.docker_volume:
+        name: portainer_data
+
+    - name: Run Portainer {{ portainer_version }}
+      community.docker.docker_container:
+        name: portainer
+        image: "portainer/portainer-ce:{{ portainer_version }}"
+        restart_policy: unless-stopped
+        command: --admin-password-file /run/secrets/portainer_admin
+        published_ports:
+          - "9443:9443"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - portainer_data:/data
+          - /opt/portainer/admin_password:/run/secrets/portainer_admin:ro
+
+    ########### Homepage
+    - name: Create Homepage config directory
+      ansible.builtin.file:
+        path: "{{ homepage_config_dir }}"
+        state: directory
+        owner: "{{ homepage_uid }}"
+        group: "{{ homepage_uid }}"
+        mode: '0700'
+
+    - name: Deploy Homepage configuration
+      ansible.builtin.template:
+        src: "templates/homepage/{{ item }}.j2"
+        dest: "{{ homepage_config_dir }}/{{ item }}"
+        owner: "{{ homepage_uid }}"
+        group: "{{ homepage_uid }}"
+        mode: '0600'
+      loop:
+        - settings.yaml
+        - services.yaml
+        - widgets.yaml
+        - bookmarks.yaml
+        - docker.yaml
+      notify: Restart Homepage
+
+    - name: Run Homepage {{ homepage_version }}
+      community.docker.docker_container:
+        name: homepage
+        image: "ghcr.io/gethomepage/homepage:{{ homepage_version }}"
+        restart_policy: unless-stopped
+        published_ports:
+          - "3000:3000"
+        env:
+          HOMEPAGE_ALLOWED_HOSTS: "home.{{ domain }}"
+          PUID: "{{ homepage_uid | string }}"
+          PGID: "{{ homepage_uid | string }}"
+        volumes:
+          - "{{ homepage_config_dir }}:/app/config"
+
+  handlers:
+    - name: Restart Homepage
+      community.docker.docker_container:
+        name: homepage
+        image: "ghcr.io/gethomepage/homepage:{{ homepage_version }}"
+        state: started
+        restart: true

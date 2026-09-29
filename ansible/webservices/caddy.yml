@@ -1,0 +1,60 @@
+---
+# Caddy routes. Runs last (after every backend is deployed): it depends on all their addresses.
+- name: Caddy reverse proxy routes
+  hosts: webservices
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - vars/secrets.yml
+    - vars/tf_gen.yml
+
+  tasks:
+    # Cloudflare token lives in a root-only env file, not in the world-readable Caddyfile
+    - name: Deploy Caddy environment file
+      ansible.builtin.copy:
+        content: "CF_API_TOKEN={{ cloudflare_api_token }}\n"
+        dest: /etc/caddy/caddy.env
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      notify: Restart Caddy
+
+    - name: Create Caddy systemd drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/caddy.service.d
+        state: directory
+        mode: '0755'
+
+    - name: Load Caddy environment file via systemd
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          EnvironmentFile=/etc/caddy/caddy.env
+        dest: /etc/systemd/system/caddy.service.d/env.conf
+        mode: '0644'
+      notify: Restart Caddy
+
+    - name: Deploy Caddy Configuration
+      ansible.builtin.template:
+        src: templates/Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        owner: caddy
+        group: caddy
+        mode: '0644'
+        # a broken Caddyfile never reaches the live config
+        validate: caddy validate --adapter caddyfile --envfile /etc/caddy/caddy.env --config %s
+      notify: Reload Caddy
+
+  handlers:
+    - name: Restart Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: restarted
+        daemon_reload: true
+
+    - name: Reload Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: reloaded

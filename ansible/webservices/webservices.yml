@@ -81,8 +81,15 @@
         - { port: '80',   proto: 'tcp' }  # HTTP / Web Interface
         - { port: '8080',   proto: 'tcp' }  # adguard config
         - { port: '443',  proto: 'tcp' }  # HTTPS / DNS-over-HTTPS
-        - { port: '3000', proto: 'tcp' }  # AdGuard Initial Setup Port
         - { port: '853',  proto: 'tcp' }  # DNS-over-TLS
+
+    # Setup wizard port: never needed, config is deployed before first start
+    - name: Remove AdGuard setup wizard port rule
+      community.general.ufw:
+        rule: allow
+        port: '3000'
+        proto: tcp
+        delete: true
 
     - name: Enable UFW and start on boot
       community.general.ufw:
@@ -104,17 +111,14 @@
         state: present
         key: "{{ admin_public_key }}"
 
-    - name: Download and install AdGuard Home
-      ansible.builtin.shell: |
-        curl -s -S -L https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
-      args:
-        creates: /opt/AdGuardHome/AdGuardHome
-
-    - name: Ensure AdGuard Home service is enabled and started
-      ansible.builtin.service:
-        name: AdGuardHome
-        state: started
-        enabled: yes
+    # AdGuard: config is in place before the first start, so the setup wizard never runs
+    - name: Create AdGuard Home directory
+      ansible.builtin.file:
+        path: /opt/AdGuardHome
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
 
     - name: Deploy AdGuard Home configuration
       ansible.builtin.template:
@@ -122,10 +126,55 @@
         dest: /opt/AdGuardHome/AdGuardHome.yaml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
         # This backup option is a lifesaver if a template deployment fails
-        backup: yes 
+        backup: yes
       notify: Restart AdGuard
+
+    - name: Download AdGuard Home {{ adguard_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/AdguardTeam/AdGuardHome/releases/download/v{{ adguard_version }}/AdGuardHome_linux_amd64.tar.gz"
+        dest: "/opt/adguardhome-{{ adguard_version }}.tar.gz"
+        checksum: "sha256:{{ adguard_sha256 }}"
+        mode: '0644'
+
+    - name: Create AdGuard Home {{ adguard_version }} staging directory
+      ansible.builtin.file:
+        path: "/opt/adguardhome-{{ adguard_version }}"
+        state: directory
+        mode: '0700'
+
+    - name: Unpack AdGuard Home {{ adguard_version }}
+      ansible.builtin.unarchive:
+        src: "/opt/adguardhome-{{ adguard_version }}.tar.gz"
+        dest: "/opt/adguardhome-{{ adguard_version }}"
+        remote_src: true
+        creates: "/opt/adguardhome-{{ adguard_version }}/AdGuardHome/AdGuardHome"
+      # the staging dir/tarball don't exist yet in check mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Install AdGuard Home binary
+      ansible.builtin.copy:
+        src: "/opt/adguardhome-{{ adguard_version }}/AdGuardHome/AdGuardHome"
+        dest: /opt/AdGuardHome/AdGuardHome
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      ignore_errors: "{{ ansible_check_mode }}"
+      notify: Restart AdGuard
+
+    - name: Register AdGuard Home systemd service
+      ansible.builtin.command:
+        cmd: /opt/AdGuardHome/AdGuardHome -s install
+        chdir: /opt/AdGuardHome
+        creates: /etc/systemd/system/AdGuardHome.service
+
+    - name: Ensure AdGuard Home service is enabled and started
+      ansible.builtin.service:
+        name: AdGuardHome
+        state: started
+        enabled: true
 
      ########### CADDY
     - name: Install build dependencies
@@ -254,20 +303,11 @@
             state: absent
       when: caddy_modules.rc != 0 or "dns.providers.cloudflare" not in caddy_modules.stdout
 
-    - name: Deploy Caddy Configuration
-      ansible.builtin.template:
-        src: templates/Caddyfile.j2
-        dest: /etc/caddy/Caddyfile
-        owner: caddy
-        group: caddy
-        mode: '0644'
-      notify: Reload Caddy
+    # Caddy's routes (env file, Caddyfile) are in caddy.yml, run last once every backend exists
 
   handlers:
     - name: Restart Caddy
-      systemd: { name: caddy, state: restarted }
-    - name: Reload Caddy
-      systemd: { name: caddy, state: reloaded }
+      systemd: { name: caddy, state: restarted, daemon_reload: true }
     - name : Restart AdGuard
       systemd: { name: AdGuardHome, state: restarted}
 

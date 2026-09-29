@@ -2,7 +2,16 @@
 .terraform/
 *.tfstate
 *.tfstate.backup
+*.tfstate.*
 terraform.tfvars
+
+# Claude Code (local only: skills, settings, project memory)
+/.claude/
+/CLAUDE.md
+
+# Private docs (instance details + known weaknesses; repo is public)
+/docs/TODO.md
+/docs/architecture.md
 
 # Ansible
 *.retry
@@ -16,4 +25,5 @@ proxmox_lxc_key
 #secrets
 secrets*
 **/secrets*
+!**/secrets.yml.example
 tf_gen*
