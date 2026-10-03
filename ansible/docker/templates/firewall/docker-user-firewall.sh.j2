@@ -1,0 +1,13 @@
+#!/bin/sh
+# Managed by Ansible (ansible/docker/docker.yml): edits here are overwritten.
+# Published container ports are reachable from the LAN only through Caddy ({{ caddy_address }}).
+# Docker's published ports go through FORWARD, not INPUT, so they're filtered in DOCKER-USER.
+# Matching on -i {{ docker_lan_interface }} leaves container-to-host traffic (Homepage → Portainer) alone.
+set -eu
+
+iptables -N DOCKER-USER 2>/dev/null || true
+iptables -F DOCKER-USER
+{% for port in caddy_only_ports %}
+iptables -A DOCKER-USER -i {{ docker_lan_interface }} -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -s {{ caddy_address }} -j RETURN
+iptables -A DOCKER-USER -i {{ docker_lan_interface }} -p tcp -m conntrack --ctorigdstport {{ port }} --ctdir ORIGINAL -j DROP
+{% endfor %}

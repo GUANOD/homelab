@@ -14,6 +14,9 @@
   vars:
     homepage_uid: 1000
     homepage_config_dir: /opt/homepage/config
+    # Published ports that only Caddy (caddy_address, from tf_gen.yml) may reach from the LAN
+    caddy_only_ports: [9443, 3000]
+    docker_lan_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
 
   tasks:
     - name: Wait for SSH and cloud-init
@@ -67,9 +70,9 @@
         name:
           - "docker-ce={{ docker_ce_version }}"
           - "docker-ce-cli={{ docker_ce_version }}"
-          - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
+          - "containerd.io={{ containerd_version }}"
+          - "docker-buildx-plugin={{ docker_buildx_version }}"
+          - "docker-compose-plugin={{ docker_compose_version }}"
         state: present
         update_cache: true
 
@@ -78,6 +81,38 @@
         name: docker
         state: started
         enabled: true
+
+    ########### Firewall: published ports only reachable through Caddy
+    # Set up before the containers start, so a fresh build never exposes them
+    - name: Deploy DOCKER-USER firewall script
+      ansible.builtin.template:
+        src: templates/firewall/docker-user-firewall.sh.j2
+        dest: /usr/local/sbin/docker-user-firewall
+        owner: root
+        group: root
+        mode: '0755'
+      notify: Restart DOCKER-USER firewall
+
+    - name: Deploy DOCKER-USER firewall unit
+      ansible.builtin.template:
+        src: templates/firewall/docker-user-firewall.service.j2
+        dest: /etc/systemd/system/docker-user-firewall.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: firewall_unit
+      notify: Restart DOCKER-USER firewall
+
+    - name: Reload systemd after a unit change
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: firewall_unit.changed
+
+    - name: Enable and start DOCKER-USER firewall
+      ansible.builtin.systemd_service:
+        name: docker-user-firewall
+        enabled: true
+        state: started
 
     ########### Portainer
     - name: Create Portainer directory
@@ -154,6 +189,11 @@
           - "{{ homepage_config_dir }}:/app/config"
 
   handlers:
+    - name: Restart DOCKER-USER firewall
+      ansible.builtin.systemd_service:
+        name: docker-user-firewall
+        state: restarted
+
     - name: Restart Homepage
       community.docker.docker_container:
         name: homepage

@@ -5,6 +5,11 @@ variable "pm_api_token_secret" {
   type      = string
   sensitive = true
 }
+variable "pve_root_password" {
+  description = "root@pam password, only for the provider alias proxmox.root (LXC device passthrough + bind mounts)"
+  type        = string
+  sensitive   = true
+}
 // network
 variable "network_gateway" { type = string }
 //webservices
@@ -53,7 +58,15 @@ variable "docker_vm_id" {
 variable "docker_address" {
   description = "Docker host IPv4 address in CIDR format"
   type        = string
-  default     = "10.14.75.4/24"
+}
+variable "jellyfin_ct_id" {
+  description = "Proxmox container ID of Jellyfin"
+  type        = number
+  default     = 105
+}
+variable "jellyfin_address" {
+  description = "Jellyfin container IPv4 address in CIDR format"
+  type        = string
 }
 variable "backup_retention" {
   description = "vzdump retention on the omv-backups storage"

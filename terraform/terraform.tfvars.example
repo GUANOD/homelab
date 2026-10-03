@@ -4,6 +4,8 @@
 pm_api_url          = "https://192.168.1.10:8006/api2/json"
 pm_api_token_id     = "terraform@pve!terraform"
 pm_api_token_secret = ""
+# root@pam password: only for what PVE refuses to tokens (Jellyfin LXC iGPU passthrough + bind mount)
+pve_root_password = ""
 
 # Network
 network_gateway = "192.168.1.1"
@@ -32,8 +34,14 @@ privileged_user_pw = ""
 omv_backups_user     = ""
 omv_backups_password = ""
 
+# Docker host VM (Portainer, Homepage)
+docker_address = "192.168.1.4/24"
+
+# Jellyfin LXC
+jellyfin_address = "192.168.1.15/24"
+
 # Optional overrides (defaults in variables.tf)
 # pve_ssh_private_key_path = "~/.ssh/pve"
 # docker_vm_id             = 104
-# docker_address           = "192.168.1.4/24"
+# jellyfin_ct_id           = 105
 # backup_retention         = { daily = 7, weekly = 4, monthly = 3 }

@@ -1,0 +1,312 @@
+---
+- name: Jellyfin container (CT 105)
+  hosts: jellyfin
+  gather_facts: false
+
+  vars_files:
+    - vars/versions.yml
+    - vars/secrets.yml
+    - vars/tf_gen.yml
+
+  vars:
+    # Fixed so it matches the jellyfinmedia mount (ansible/pve: uid 100000 + 1000) and the
+    # render node's gid (terraform/modules/jellyfin)
+    jellyfin_uid: 1000
+    jellyfin_api: http://127.0.0.1:8096
+    jellyfin_client_header: 'MediaBrowser Client="Ansible", Device="jellyfin.yml", DeviceId="ansible-jellyfin-yml", Version="1.0"'
+    jellyfin_auth_header: '{{ jellyfin_client_header }}, Token="{{ jellyfin_login.json.AccessToken }}"'
+    # UHD 630 (Coffee Lake): what its fixed-function decoder handles; no AV1
+    jellyfin_encoding:
+      HardwareAccelerationType: qsv
+      QsvDevice: /dev/dri/renderD128
+      VaapiDevice: /dev/dri/renderD128
+      HardwareDecodingCodecs: [h264, hevc, mpeg2video, vc1, vp8, vp9]
+      EnableDecodingColorDepth10Hevc: true
+      EnableDecodingColorDepth10Vp9: true
+      EnableHardwareEncoding: true
+      # low-power encoders need HuC firmware loaded on the host (i915 enable_guc): not set up
+      EnableIntelLowPowerH264HwEncoder: false
+      EnableIntelLowPowerHevcHwEncoder: false
+
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 300
+
+    # The Debian LXC template ships without Python
+    - name: Check if Python is installed
+      ansible.builtin.raw: python3 --version
+      register: python_installed
+      failed_when: false
+      changed_when: false
+
+    - name: Bootstrap Python
+      ansible.builtin.raw: apt-get update && apt-get install -y python3 python3-apt
+      when: python_installed.rc != 0
+      changed_when: true
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    ########### Firewall: SSH from the LAN, Jellyfin only through Caddy
+    - name: Install UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Disable IPv6 in UFW (LXC)
+      ansible.builtin.lineinfile:
+        path: /etc/default/ufw
+        regexp: '^IPV6='
+        line: 'IPV6=no'
+
+    - name: Set UFW defaults
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: incoming, policy: deny }
+        - { direction: outgoing, policy: allow }
+
+    - name: Allow SSH
+      community.general.ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Allow Jellyfin from Caddy only
+      community.general.ufw:
+        rule: allow
+        port: '8096'
+        proto: tcp
+        from_ip: "{{ caddy_address }}"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    ########### Jellyfin
+    # Created before the package: its postinst only adds the user/group when missing
+    - name: Create jellyfin group
+      ansible.builtin.group:
+        name: jellyfin
+        gid: "{{ jellyfin_uid }}"
+
+    - name: Create jellyfin user
+      ansible.builtin.user:
+        name: jellyfin
+        uid: "{{ jellyfin_uid }}"
+        group: jellyfin
+        home: /var/lib/jellyfin
+        create_home: false
+        shell: /bin/false
+        comment: Jellyfin default user
+
+    - name: Create apt keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Jellyfin apt key
+      ansible.builtin.get_url:
+        url: https://repo.jellyfin.org/jellyfin_team.gpg.key
+        dest: /etc/apt/keyrings/jellyfin.asc
+        checksum: "sha256:{{ jellyfin_key_sha256 }}"
+        mode: '0644'
+
+    - name: Add Jellyfin apt repository
+      ansible.builtin.deb822_repository:
+        name: jellyfin
+        types: deb
+        uris: https://repo.jellyfin.org/debian
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: main
+        architectures: amd64
+        signed_by: /etc/apt/keyrings/jellyfin.asc
+
+    - name: Install Jellyfin {{ jellyfin_version }}
+      ansible.builtin.apt:
+        name:
+          - "jellyfin-server={{ jellyfin_version }}"
+          - "jellyfin-web={{ jellyfin_version }}"
+          - "jellyfin-ffmpeg8={{ jellyfin_ffmpeg_version }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure Jellyfin is enabled and started
+      ansible.builtin.service:
+        name: jellyfin
+        state: started
+        enabled: true
+
+    # Paths are case-sensitive; also catches the share not being mounted (empty /media)
+    - name: Check library folders exist in /media
+      ansible.builtin.stat:
+        path: "/media/{{ item.folder }}"
+      loop: "{{ jellyfin_libraries }}"
+      loop_control:
+        label: "{{ item.folder }}"
+      register: jellyfin_library_dirs
+
+    - name: Fail on a missing library folder
+      ansible.builtin.assert:
+        that: item.stat.isdir | default(false)
+        fail_msg: "/media/{{ item.item.folder }} is missing (wrong name/case in secrets.yml, or the share isn't mounted)"
+        quiet: true
+      loop: "{{ jellyfin_library_dirs.results }}"
+      loop_control:
+        label: "{{ item.item.folder }}"
+
+    ########### Jellyfin setup through the API (no clicks in the browser)
+    - name: Wait for Jellyfin API
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/System/Info/Public"
+      register: jellyfin_info
+      # Jellyfin answers 200 while still starting, without StartupWizardCompleted: wait for the real info
+      until: jellyfin_info.status == 200 and jellyfin_info.json.StartupWizardCompleted is defined
+      retries: 30
+      delay: 2
+      changed_when: false
+      check_mode: false
+
+    - name: Complete Jellyfin startup wizard
+      when: not jellyfin_info.json.StartupWizardCompleted
+      block:
+        # the wizard creates its first user on this GET
+        - name: Initialise Jellyfin first user
+          ansible.builtin.uri:
+            url: "{{ jellyfin_api }}/Startup/User"
+          changed_when: false
+
+        - name: Set Jellyfin server settings
+          ansible.builtin.uri:
+            url: "{{ jellyfin_api }}/Startup/Configuration"
+            method: POST
+            body_format: json
+            body:
+              ServerName: jellyfin
+              UICulture: en-US
+              MetadataCountryCode: "{{ jellyfin_metadata_country | default('US') }}"
+              PreferredMetadataLanguage: "{{ jellyfin_metadata_language | default('en') }}"
+            status_code: [200, 204]
+          changed_when: true
+
+        - name: Create Jellyfin admin
+          ansible.builtin.uri:
+            url: "{{ jellyfin_api }}/Startup/User"
+            method: POST
+            body_format: json
+            body:
+              Name: "{{ jellyfin_admin_user }}"
+              Password: "{{ jellyfin_admin_password }}"
+            status_code: [200, 204]
+          changed_when: true
+          no_log: true
+
+        # UFW only lets Caddy reach 8096, so this exposes nothing extra
+        - name: Allow Jellyfin remote access
+          ansible.builtin.uri:
+            url: "{{ jellyfin_api }}/Startup/RemoteAccess"
+            method: POST
+            body_format: json
+            body:
+              EnableRemoteAccess: true
+            status_code: [200, 204]
+          changed_when: true
+
+        - name: Finish Jellyfin startup wizard
+          ansible.builtin.uri:
+            url: "{{ jellyfin_api }}/Startup/Complete"
+            method: POST
+            status_code: [200, 204]
+          changed_when: true
+
+    - name: Log in to Jellyfin API
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/Users/AuthenticateByName"
+        method: POST
+        headers:
+          Authorization: "{{ jellyfin_client_header }}"
+        body_format: json
+        body:
+          Username: "{{ jellyfin_admin_user }}"
+          Pw: "{{ jellyfin_admin_password }}"
+      register: jellyfin_login
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    # Caddy as known proxy: Jellyfin sees the real client IP instead of 10.14.75.2
+    - name: Read Jellyfin network settings
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/System/Configuration/network"
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+      register: jellyfin_network
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Set Caddy as Jellyfin known proxy
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/System/Configuration/network"
+        method: POST
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+        body_format: json
+        body: "{{ jellyfin_network.json | combine({'KnownProxies': [caddy_address]}) }}"
+        status_code: [200, 204]
+      when: jellyfin_network.json.KnownProxies != [caddy_address]
+      changed_when: true
+      no_log: true
+
+    - name: Read Jellyfin encoding settings
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/System/Configuration/encoding"
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+      register: jellyfin_encoding_current
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Enable Jellyfin hardware transcoding (Intel QSV)
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/System/Configuration/encoding"
+        method: POST
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+        body_format: json
+        body: "{{ jellyfin_encoding_current.json | combine(jellyfin_encoding) }}"
+        status_code: [200, 204]
+      when: jellyfin_encoding_current.json | combine(jellyfin_encoding) != jellyfin_encoding_current.json
+      changed_when: true
+      no_log: true
+
+    - name: List Jellyfin libraries
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/Library/VirtualFolders"
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+      register: jellyfin_folders
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    # Adds missing libraries only: renamed/removed entries or changed folders aren't reconciled
+    - name: Create Jellyfin library {{ item.name }}
+      ansible.builtin.uri:
+        url: "{{ jellyfin_api }}/Library/VirtualFolders?{{ {'name': item.name, 'collectionType': item.type, 'paths': '/media/' ~ item.folder, 'refreshLibrary': 'true'} | urlencode }}"
+        method: POST
+        headers:
+          Authorization: "{{ jellyfin_auth_header }}"
+        status_code: [200, 204]
+      loop: "{{ jellyfin_libraries }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name not in (jellyfin_folders.json | map(attribute='Name') | list)
+      changed_when: true

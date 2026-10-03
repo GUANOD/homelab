@@ -1,0 +1,7 @@
+---
+# repo.jellyfin.org/debian (trixie). Upgrade = bump all three together.
+jellyfin_version: "12.1+deb13"          # jellyfin-server + jellyfin-web
+jellyfin_ffmpeg_version: "8.1.3-1-trixie"
+
+# Repo signing key (fingerprint 4918AABC486CA052358D778D49023CD01DE21A7B)
+jellyfin_key_sha256: "a0cde241ae297fa6f0265c0bf15ce9eb9ee97c008904a59ab367a67d59532839"

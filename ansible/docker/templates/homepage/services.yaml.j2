@@ -42,6 +42,20 @@
           key: {{ homepage_portainer_api_key | to_json }}
 {% endif %}
 
+- Media:
+    # Monitored through Caddy: the Jellyfin container's firewall only lets Caddy reach 8096
+    - Jellyfin:
+        icon: jellyfin.png
+        href: https://jellyfin.{{ domain }}
+        description: Media server (CT 105, {{ jellyfin_address }})
+        siteMonitor: https://jellyfin.{{ domain }}
+{% if homepage_jellyfin_key is defined %}
+        widget:
+          type: jellyfin
+          url: https://jellyfin.{{ domain }}
+          key: {{ homepage_jellyfin_key | to_json }}
+{% endif %}
+
 - Network:
     - AdGuard Home:
         icon: adguard-home.png

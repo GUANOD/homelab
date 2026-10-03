@@ -1,6 +1,9 @@
 ---
 # Docker CE from download.docker.com (apt version string)
 docker_ce_version: "5:29.8.1-1~debian.13~trixie"
+containerd_version: "2.3.6-1~debian.13~trixie"
+docker_buildx_version: "0.37.1-1~debian.13~trixie"
+docker_compose_version: "5.5.1-1~debian.13~trixie"
 
 # Container images
 portainer_version: "2.45.1"   # LTS

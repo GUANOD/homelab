@@ -1,0 +1,14 @@
+# Managed by Ansible (ansible/docker/docker.yml)
+# Re-applies the DOCKER-USER rules whenever Docker (re)starts
+[Unit]
+Description=Restrict published Docker ports to Caddy (DOCKER-USER chain)
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/docker-user-firewall
+
+[Install]
+WantedBy=docker.service

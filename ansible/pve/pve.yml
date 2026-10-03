@@ -1,0 +1,96 @@
+---
+# Host bootstrap for pve1. Only the media storage for Jellyfin so far; see docs/TODO.md
+# ("Proxmox host") for the rest of the planned bootstrap.
+- name: Proxmox host (pve1)
+  hosts: pve
+  gather_facts: false
+
+  vars_files:
+    - vars/secrets.yml
+
+  vars:
+    omv_address: 10.14.75.3
+    # Jellyfin's uid/gid inside the unprivileged container (ansible/jellyfin) + the default
+    # 100000 offset of unprivileged containers: files on the share look owned by Jellyfin in there
+    jellyfin_uid: 1000
+    omv_media_host_uid: "{{ 100000 + jellyfin_uid }}"
+    # CIFS has no "none" content type; iso is a placeholder, create-subdirs 0 keeps PVE's
+    # template/iso/ folder out of the media share
+    omv_media_settings:
+      content: iso
+      options: "uid={{ omv_media_host_uid }},gid={{ omv_media_host_uid }},file_mode=0664,dir_mode=0775"
+      create-subdirs: "0"
+
+  tasks:
+    # Fails early on a wrong share name or credentials, instead of a storage that never mounts
+    - name: List OMV shares with the media credentials
+      ansible.builtin.command:
+        argv: [pvesm, scan, cifs, "{{ omv_address }}", --username, "{{ omv_media_username }}", --password, "{{ omv_media_password }}"]
+      register: omv_shares
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Check the media share exists
+      ansible.builtin.assert:
+        that: omv_media_share in (omv_shares.stdout_lines | map('split') | map('first') | list)
+        fail_msg: "Share {{ omv_media_share }} not visible to {{ omv_media_username }} on {{ omv_address }}"
+        quiet: true
+
+    # community.proxmox.proxmox_storage can't set mount options or create-subdirs, so pvesm it is
+    - name: Read jellyfinmedia storage
+      ansible.builtin.command: pvesh get /storage/jellyfinmedia --output-format json
+      register: omv_media_current
+      changed_when: false
+      failed_when: omv_media_current.rc != 0 and 'does not exist' not in omv_media_current.stderr
+      check_mode: false
+
+    - name: Add jellyfinmedia storage
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - cifs
+          - jellyfinmedia
+          - --server
+          - "{{ omv_address }}"
+          - --share
+          - "{{ omv_media_share }}"
+          - --username
+          - "{{ omv_media_username }}"
+          - --password
+          - "{{ omv_media_password }}"
+          - --nodes
+          - pve1
+          - --content
+          - "{{ omv_media_settings.content }}"
+          - --options
+          - "{{ omv_media_settings.options }}"
+          - --create-subdirs
+          - "{{ omv_media_settings['create-subdirs'] }}"
+      when: omv_media_current.rc != 0
+      changed_when: true
+      no_log: true
+
+    # Share, username and password are only set on creation (pvesm can't show the password to compare).
+    # New mount options apply on the next mount: stop CT 105, umount /mnt/pve/jellyfinmedia, start it again.
+    - name: Update jellyfinmedia storage settings
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - set
+          - jellyfinmedia
+          - --content
+          - "{{ omv_media_settings.content }}"
+          - --options
+          - "{{ omv_media_settings.options }}"
+          - --create-subdirs
+          - "{{ omv_media_settings['create-subdirs'] }}"
+      vars:
+        current: "{{ omv_media_current.stdout | default('{}', true) | from_json }}"
+      when:
+        - omv_media_current.rc == 0
+        - (current.content | default('')) != omv_media_settings.content or
+          (current.options | default('')) != omv_media_settings.options or
+          (current['create-subdirs'] | default(1) | string) != omv_media_settings['create-subdirs']
+      changed_when: true

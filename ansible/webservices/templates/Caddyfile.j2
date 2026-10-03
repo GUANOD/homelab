@@ -37,6 +37,12 @@ home.{{ domain }} {
     reverse_proxy {{ docker_address }}:3000
 }
 
+jellyfin.{{ domain }} {
+    import cloudflare_tls
+    # Caddy is a KnownProxy in Jellyfin (set by ansible/jellyfin), so X-Forwarded-For is trusted
+    reverse_proxy {{ jellyfin_address }}:8096
+}
+
 hass.{{ domain }} {
     import cloudflare_tls
     # Home Assistant serves plain HTTP on 8123 (no upstream TLS)
